@@ -60,6 +60,11 @@ var (
 	logger = grpclog.Component("dns")
 )
 
+var (
+	newTimer           = time.NewTimer
+	newTimerDNSResRate = time.NewTimer
+)
+
 func init() {
 	resolver.Register(NewBuilder())
 	internal.TimeAfterFunc = time.After
@@ -78,6 +83,10 @@ const (
 	// described in RFC-1464 using the attribute name grpc_config.
 	txtAttribute = "grpc_config="
 )
+
+// To prevent excessive re-resolution, we enforce a rate limit on DNS
+// resolution requests.
+var minDNSResRate = 30 * time.Second
 
 var addressDialer = func(address string) func(context.Context, string, string) (net.Conn, error) {
 	return func(ctx context.Context, network, _ string) (net.Conn, error) {
@@ -209,27 +218,29 @@ func (d *dnsResolver) watcher() {
 			err = d.cc.UpdateState(*state)
 		}
 
-		var waitTime time.Duration
+		var timer *time.Timer
 		if err == nil {
 			// Success resolving, wait for the next ResolveNow. However, also wait 30
 			// seconds at the very least to prevent constantly re-resolving.
 			backoffIndex = 1
-			waitTime = MinResolutionInterval
+			timer = newTimerDNSResRate(minDNSResRate)
 			select {
 			case <-d.ctx.Done():
+				timer.Stop()
 				return
 			case <-d.rn:
 			}
 		} else {
 			// Poll on an error found in DNS Resolver or an error received from
 			// ClientConn.
-			waitTime = backoff.DefaultExponential.Backoff(backoffIndex)
+			timer = newTimer(backoff.DefaultExponential.Backoff(backoffIndex))
 			backoffIndex++
 		}
 		select {
 		case <-d.ctx.Done():
+			timer.Stop()
 			return
-		case <-internal.TimeAfterFunc(waitTime):
+		case <-timer.C:
 		}
 	}
 }
