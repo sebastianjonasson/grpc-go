@@ -223,6 +223,7 @@ func (d *dnsResolver) watcher() {
 			// Success resolving, wait for the next ResolveNow. However, also wait 30
 			// seconds at the very least to prevent constantly re-resolving.
 			backoffIndex = 1
+			logger.Info("debug: start timer")
 			timer = newTimerDNSResRate(minDNSResRate)
 			select {
 			case <-d.ctx.Done():
@@ -236,12 +237,14 @@ func (d *dnsResolver) watcher() {
 			timer = newTimer(backoff.DefaultExponential.Backoff(backoffIndex))
 			backoffIndex++
 		}
+		logger.Info("debug: wait for timer")
 		select {
 		case <-d.ctx.Done():
 			timer.Stop()
 			return
 		case <-timer.C:
 		}
+		logger.Info("debug: timer done")
 	}
 }
 
